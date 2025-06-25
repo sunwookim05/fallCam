@@ -36,28 +36,35 @@ def is_close_enough(bbox, threshold=200):
 
 # 드론 이동 제어 함수
 def move_forward(duration=1):
-    drone.set_pitch(30)
-    drone.move(duration)
-    drone.set_pitch(0)
+    if drone_flying:
+        drone.set_pitch(30)
+        drone.move(duration)
+        drone.set_pitch(0)
 
 def move_backward(duration=1):
-    drone.set_pitch(-30)
-    drone.move(duration)
-    drone.set_pitch(0)
+    if drone_flying:
+        drone.set_pitch(-30)
+        drone.move(duration)
+        drone.set_pitch(0)
 
 def move_left(duration=1):
-    drone.set_roll(-30)
-    drone.move(duration)
-    drone.set_roll(0)
+    if drone_flying:
+        drone.set_roll(-30)
+        drone.move(duration)
+        drone.set_roll(0)
 
 def move_right(duration=1):
-    drone.set_roll(30)
-    drone.move(duration)
-    drone.set_roll(0)
+    if drone_flying:
+        drone.set_roll(30)
+        drone.move(duration)
+        drone.set_roll(0)
 
 # 사람에게 접근 후 착륙
 def approach_and_land():
     global drone_flying, fall_triggered
+
+    close_counter = 0
+    CLOSE_LIMIT = 3
 
     while True:
         try:
@@ -66,7 +73,7 @@ def approach_and_land():
             continue
 
         img = Image.fromarray(frame2[..., ::-1])
-        results = drone_model(img, size=640)
+        results = drone_model(img, size=1280)
 
         frame_width = frame2.shape[1]
         frame_center = frame_width // 2
@@ -75,7 +82,7 @@ def approach_and_land():
         person_found = False
         for result in results.xyxy[0]:
             x1, y1, x2, y2, conf, cls = result.tolist()
-            if conf > 0.5 and int(cls) == 0:  # 사람 클래스=0
+            if conf > 0.25 and int(cls) == 0:
                 person_found = True
                 person_center_x = int((x1 + x2) / 2)
 
@@ -89,19 +96,25 @@ def approach_and_land():
                 elif person_center_x > frame_center + tolerance:
                     move_right(1)
                 else:
-                    if is_close_enough((x1, y1, x2, y2)):
-                        drone.land()
-                        drone.close()
-                        drone_flying = False
-                        fall_triggered = False
-                        return
-                    move_forward(1)
+                    if is_close_enough((x1, y1, x2, y2), threshold=200):
+                        close_counter += 1
+                        if close_counter >= CLOSE_LIMIT:
+                            print("사람 앞 도달, 착륙합니다.")
+                            drone.land()
+                            drone.close()
+                            drone_flying = False
+                            fall_triggered = False
+                            return
+                    else:
+                        close_counter = 0
+                        move_forward(1)
                 break
 
         if not person_found:
             move_forward(1)
+            close_counter = 0
 
-        sleep(0.3)
+        sleep(0.5)
 
 # 낙상 감지용 변수들
 position_history = {}
@@ -115,7 +128,6 @@ conf_threshold = 0.3
 pt_radius = 3
 ln_thick = 1
 
-# 포인트 연결 정보와 색
 bright_colors = {
     'nose_neck': (200,255,255), 'neck_l_sh': (255,200,255), 'neck_r_sh': (255,255,200),
     'neck_l_hip': (200,230,255), 'neck_r_hip': (255,225,200),
