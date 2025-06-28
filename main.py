@@ -5,66 +5,62 @@ import depthai as dai
 from ultralytics import YOLO
 from time import sleep
 import threading
-from codrone_edu.drone import Drone
+from codrone_edu.drone import Drone, Note
 from PIL import Image
 import torch
 import queue
 
-# 모델 로드
 pose_model = YOLO('yolov8n-pose.pt')
 drone_model = torch.hub.load('ultralytics/yolov5', 'custom', path='best.pt', force_reload=True)
 
 DRONE_CLASS_NAME = 'drone'
 
-# 드론 초기화
 drone = Drone()
 drone.pair()
+drone.set_drone_LED(255, 0, 0, 100)
+drone.set_controller_LED(255, 0, 0, 100)
 drone.set_trim(0, 0)
 
-# 상태 변수
 drone_flying = False
 fall_triggered = False
-
-# 프레임 전달용 큐
 frame_queue = queue.Queue(maxsize=1)
 
-# 사람과의 거리 판단
 def is_close_enough(bbox, threshold=200):
     x1, y1, x2, y2 = bbox
     h = y2 - y1
     return h >= threshold
 
-# 드론 이동 제어 함수
 def move_forward(duration=1):
-    if drone_flying:
-        drone.set_pitch(30)
-        drone.move(duration)
-        drone.set_pitch(0)
+    drone.set_pitch(30)
+    drone.move(duration)
+    drone.set_pitch(0)
 
 def move_backward(duration=1):
-    if drone_flying:
-        drone.set_pitch(-30)
-        drone.move(duration)
-        drone.set_pitch(0)
+    drone.set_pitch(-30)
+    drone.move(duration)
+    drone.set_pitch(0)
 
 def move_left(duration=1):
-    if drone_flying:
-        drone.set_roll(-30)
-        drone.move(duration)
-        drone.set_roll(0)
+    drone.set_roll(-30)
+    drone.move(duration)
+    drone.set_roll(0)
 
 def move_right(duration=1):
-    if drone_flying:
-        drone.set_roll(30)
-        drone.move(duration)
-        drone.set_roll(0)
+    drone.set_roll(30)
+    drone.move(duration)
+    drone.set_roll(0)
 
-# 사람에게 접근 후 착륙
+def siren_beep(loop=3):
+    tones = [Note.B4, Note.FS4]
+    for _ in range(loop):
+        for note in tones:
+            drone.drone_buzzer(note, 400)
+            sleep(0.2)
+
 def approach_and_land():
     global drone_flying, fall_triggered
 
-    close_counter = 0
-    CLOSE_LIMIT = 3
+    threading.Thread(target=siren_beep, daemon=True).start()
 
     while True:
         try:
@@ -73,7 +69,7 @@ def approach_and_land():
             continue
 
         img = Image.fromarray(frame2[..., ::-1])
-        results = drone_model(img, size=1280)
+        results = drone_model(img, size=640)
 
         frame_width = frame2.shape[1]
         frame_center = frame_width // 2
@@ -82,7 +78,7 @@ def approach_and_land():
         person_found = False
         for result in results.xyxy[0]:
             x1, y1, x2, y2, conf, cls = result.tolist()
-            if conf > 0.25 and int(cls) == 0:
+            if conf > 0.5 and int(cls) == 0:
                 person_found = True
                 person_center_x = int((x1 + x2) / 2)
 
@@ -96,25 +92,19 @@ def approach_and_land():
                 elif person_center_x > frame_center + tolerance:
                     move_right(1)
                 else:
-                    if is_close_enough((x1, y1, x2, y2), threshold=200):
-                        close_counter += 1
-                        if close_counter >= CLOSE_LIMIT:
-                            print("사람 앞 도달, 착륙합니다.")
-                            drone.land()
-                            drone.close()
-                            drone_flying = False
-                            fall_triggered = False
-                            return
-                    else:
-                        close_counter = 0
-                        move_forward(1)
+                    if is_close_enough((x1, y1, x2, y2)):
+                        drone.land()
+                        drone.close()
+                        drone_flying = False
+                        fall_triggered = False
+                        return
+                    move_forward(1)
                 break
 
         if not person_found:
             move_forward(1)
-            close_counter = 0
 
-        sleep(0.5)
+        sleep(0.3)
 
 # 낙상 감지용 변수들
 position_history = {}
